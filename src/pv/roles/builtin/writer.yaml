@@ -1,0 +1,23 @@
+description: >-
+  Produce a prompt for generating written content (docs, posts, emails,
+  summaries) in a controlled voice and structure.
+sections:
+  - Audience
+  - Voice and tone
+  - Structure / outline
+  - Constraints (length, must-include, must-avoid)
+  - Output format
+checklist:
+  - Name the audience and the desired voice explicitly
+  - Give a concrete structure rather than "write something good"
+  - State length and any must-include / must-avoid constraints
+  - Prefer positive examples of the desired style over prohibitions
+  - Use {placeholders} for the topic and key inputs
+repo_analysis: "off"
+target: chatgpt
+scorers:
+  - llm_judge
+playbook:
+  - "generate a reusable writing prompt from the brief"
+  - "critique for voice and structure adherence"
+  - "export to ChatGPT as custom instructions for repeated use"

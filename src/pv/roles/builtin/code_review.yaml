@@ -1,0 +1,25 @@
+description: >-
+  Produce a repo-aware, legacy-aware code-review prompt that evaluates any diff
+  and reports structured findings by severity.
+sections:
+  - Context (what kind of repo and changes)
+  - What to review (correctness, tests, compatibility, security)
+  - Severity rubric (blocker / major / minor / nit)
+  - Legacy risks to watch for
+  - Findings output format (structured, per-finding)
+checklist:
+  - Flag any behavior change that isn't called out by the author
+  - Surface missing or weakened tests explicitly
+  - Watch for hidden coupling and backward-compatibility breaks
+  - Emit findings as a structured list with severity, location, and suggested fix
+  - Use {diff} (and {context} if helpful) as the per-use inputs
+repo_analysis: light
+target: claude
+scorers:
+  - json_schema_valid
+  - llm_judge
+playbook:
+  - "generate with --repo: tailor risks to this codebase's age and patterns"
+  - "export as a Claude Code skill/command and run it on every diff"
+  - "critique to harden the severity rubric"
+  - "improve later: build a set of reviewed diffs, judge precision/recall, optimize"

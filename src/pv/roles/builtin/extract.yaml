@@ -1,0 +1,23 @@
+description: >-
+  Produce a prompt for structured extraction or classification that returns a
+  precise, schema-conformant output.
+sections:
+  - Task definition
+  - Output schema (exact fields/labels)
+  - Extraction/classification rules
+  - Edge-case handling
+  - Output (JSON only)
+checklist:
+  - Specify the exact output schema or label set — no ambiguity
+  - Require the model to emit ONLY the structured output, no prose
+  - Define how to handle missing/ambiguous inputs
+  - Use {input} (and other {placeholders}) for the per-use data
+repo_analysis: "off"
+target: raw
+scorers:
+  - json_schema_valid
+  - exact_match
+playbook:
+  - "generate a strict extraction/classification prompt"
+  - "critique for schema precision and edge-case coverage"
+  - "improve later: assemble a labeled dataset, eval exact_match, optimize"

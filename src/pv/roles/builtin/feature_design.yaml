@@ -1,0 +1,25 @@
+description: >-
+  Produce a repo-aware prompt that designs a new feature by first inspecting the
+  codebase and maximizing reuse of existing code and conventions.
+sections:
+  - Context (the feature to design)
+  - Repo conventions to follow
+  - Reuse audit (existing components/hooks/utilities to build on)
+  - Design proposal (components, data flow, file placement)
+  - Implementation steps
+  - Constraints and non-goals
+checklist:
+  - Inspect the repo BEFORE proposing a design — never invent structure
+  - Prefer reusing existing components/hooks/utilities over writing new ones
+  - Follow the repo's detected conventions (routing, state, styling, file layout)
+  - Call out exactly which existing files to extend or mirror
+  - Use {feature} (and other {placeholders}) for the per-use inputs
+repo_analysis: light
+target: cursor
+scorers:
+  - llm_judge
+playbook:
+  - "generate with --repo: bake in the repo's stack and conventions"
+  - "export as a Cursor rule and reuse it for every new feature"
+  - "critique to sharpen the reuse-audit step"
+  - "improve later: judge designs for reuse % and convention-fit, optimize"

@@ -1,0 +1,22 @@
+description: >-
+  A catch-all role for tasks that don't fit a specific category. Produces a
+  clear, well-structured, reusable prompt.
+sections:
+  - Role and context
+  - Task instructions
+  - Steps or method
+  - Constraints
+  - Output format
+checklist:
+  - State the role/persona and the goal up front
+  - Give concrete, ordered instructions rather than vague guidance
+  - Specify the output format explicitly
+  - Use {placeholders} for anything supplied at use-time
+repo_analysis: "off"
+target: raw
+scorers:
+  - llm_judge
+playbook:
+  - "generate a reusable prompt from the brief"
+  - "critique against the checklist"
+  - "export to whichever tool you'll run it in"

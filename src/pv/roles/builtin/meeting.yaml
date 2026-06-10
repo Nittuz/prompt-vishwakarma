@@ -1,0 +1,26 @@
+description: >-
+  Turn meeting inputs (metrics, priorities, attendees) into a tight, decision-
+  oriented, time-boxed agenda or plan.
+sections:
+  - Context and objective of the meeting
+  - Inputs the facilitator will provide
+  - Agenda structure (ordered sections)
+  - Time-boxing per section
+  - Decisions required and their owners
+  - Action items and follow-ups
+  - Output format
+checklist:
+  - Time-box every agenda section so the total fits the meeting length
+  - Force explicit decisions with a named owner and due date
+  - Lead with outcomes (wins/misses) before diving into detail
+  - Keep it skimmable — short headers, no filler
+  - Use {placeholders} for inputs supplied at use-time (metrics, attendees, length)
+repo_analysis: "off"
+target: raw
+scorers:
+  - llm_judge
+playbook:
+  - "generate: produce a reusable, parameterized agenda prompt"
+  - "critique: tighten time-boxing and decision focus"
+  - "use it directly, or export to ChatGPT for recurring meetings"
+  - "improve later: collect a few past agendas, judge for decision-density, optimize"
