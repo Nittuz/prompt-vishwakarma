@@ -6,6 +6,7 @@ A scorer spec is either a bare name (``"exact_match"``) or a dict with a
 
 from __future__ import annotations
 
+from .base import Scorer
 from .deterministic import (
     Contains,
     ExactMatch,
@@ -20,14 +21,16 @@ _DETERMINISTIC = {
 }
 
 
-def build_scorers(specs: list, runner=None, judge_model: str = "opus") -> list:
-    scorers = []
+def build_scorers(specs: list, runner=None, judge_model: str = "opus") -> list[Scorer]:
+    scorers: list[Scorer] = []
     for spec in specs:
         if isinstance(spec, str):
             name, cfg = spec, {}
         else:
             cfg = dict(spec)
-            name = cfg.pop("name")
+            name = cfg.pop("name", None)
+            if name is None:
+                raise ValueError(f"scorer spec missing 'name': {spec!r}")
         if name == "llm_judge":
             if runner is None:
                 raise ValueError("llm_judge requires a runner")

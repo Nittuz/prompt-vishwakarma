@@ -42,7 +42,13 @@ class LLMJudge:
             GenParams(model=self.model, json_schema=JUDGE_SCHEMA),
         )
         d = resp.structured or {}
-        score = int(d.get("score", 0))
+        try:
+            score = int(d.get("score", 0) or 0)
+        except (TypeError, ValueError):
+            return ScoreResult(
+                scorer=self.name, value=0.0, passed=False,
+                detail=f"judge returned malformed score: {d.get('score')!r}",
+            )
         value = max(0.0, min(1.0, (score - 1) / 4)) if score else 0.0
         return ScoreResult(
             scorer=self.name,

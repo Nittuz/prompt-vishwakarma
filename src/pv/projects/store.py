@@ -12,8 +12,14 @@ from ..store import paths
 from .model import Project
 
 
+def _validate_name(name: str) -> str:
+    if not name or "/" in name or "\\" in name or name in (".", "..") or ".." in name:
+        raise ValueError(f"invalid project name: {name!r}")
+    return name
+
+
 def project_dir(root: Path, name: str) -> Path:
-    return paths.projects_dir(root) / name
+    return paths.projects_dir(root) / _validate_name(name)
 
 
 def project_file(root: Path, name: str) -> Path:
@@ -45,7 +51,11 @@ def prompt_store_for(root: Path, name: str) -> PromptStore:
 def dataset_path(root: Path, project: Project, split: str) -> Path:
     if split not in project.datasets:
         raise KeyError(f"unknown split {split!r} (have {sorted(project.datasets)})")
-    return project_dir(root, project.name) / project.datasets[split]
+    base = project_dir(root, project.name)
+    p = (base / project.datasets[split]).resolve()
+    if not p.is_relative_to(base.resolve()):  # reject absolute / .. escapes from project.yaml
+        raise ValueError(f"dataset path for {split!r} escapes the project directory")
+    return p
 
 
 def init_project(root: Path, name: str, role: str) -> Project:
@@ -71,5 +81,6 @@ def promote(root: Path, prompt_name: str, to_project: str) -> Project:
     project = load_project(root, to_project) if exists(root, to_project) else init_project(
         root, to_project, role
     )
-    prompt_store_for(root, to_project).save_new_version(prompt.model_copy(update={"version": 1}))
+    # save_new_version assigns the next version number itself.
+    prompt_store_for(root, to_project).save_new_version(prompt)
     return project

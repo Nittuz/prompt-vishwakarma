@@ -17,7 +17,7 @@ def render_report(run: Run) -> str:
         "| --- | --- | --- |",
     ]
     for name, m in run.metrics.items():
-        lines.append(f"| {name} | {m['mean']:.3f} | {m['pass_rate']:.0%} |")
+        lines.append(f"| {name} | {m.get('mean', 0.0):.3f} | {m.get('pass_rate', 0.0):.0%} |")
     lines += ["", "## Examples", "", "| id | scores | output (truncated) |", "| --- | --- | --- |"]
     for r in run.examples:
         sc = " ".join(f"{s.scorer}={s.value:.2f}" for s in r.scores)

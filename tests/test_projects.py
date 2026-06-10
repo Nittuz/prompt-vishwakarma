@@ -29,6 +29,12 @@ def test_load_missing_raises(tmp_path):
         store.load_project(tmp_path, "nope")
 
 
+def test_invalid_project_name_rejected(tmp_path):
+    for bad in ["../evil", "a/b", ".."]:
+        with pytest.raises(ValueError):
+            store.project_dir(tmp_path, bad)
+
+
 def test_promote_copies_library_prompt(tmp_path):
     lib = PromptStore(paths.library_dir(tmp_path))
     lib.save_new_version(PromptVersion(name="agenda", role="meeting", system="s", user="u {x}"))

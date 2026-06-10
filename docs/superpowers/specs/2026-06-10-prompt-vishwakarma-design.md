@@ -459,6 +459,8 @@ Claude Code-native wrappers in `.claude/commands/`: `/new`, `/critique`,
 ---
 
 ## 10. Build roadmap (each phase independently usable)
+> Status: Phases 1–3 ✅ built (Generate front door + Improve path). Phases 4–6 pending.
+
 1. **Foundations** — package skeleton, `config`, `runners/claude` (Agent SDK +
    subprocess fallback) + cache, prompts model/registry, `library/` storage.
    *Outcome: call Claude key-free with versioned prompts.*

@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import time
+import uuid
 from statistics import mean
 
 from ..datasets.model import Example
 from ..prompts.model import PromptVersion
-from ..runners.base import GenParams, Message
+from ..runners.base import GenParams, Message, Runner
 from .result import ExampleResult, Run, ScoreResult
+from .scorers.base import Scorer
 
 
 def _run_id(project: str, split: str) -> str:
-    return f"{project or 'lib'}-{split}-{int(time.time())}"
+    return f"{project or 'lib'}-{split}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
 
 
 def _check_inputs(prompt: PromptVersion, examples: list[Example]) -> None:
@@ -23,25 +25,27 @@ def _check_inputs(prompt: PromptVersion, examples: list[Example]) -> None:
 
 
 def run_eval(
-    runner,
+    runner: Runner,
     prompt: PromptVersion,
     examples: list[Example],
-    scorers: list,
+    scorers: list[Scorer],
     model: str = "opus",
     project: str = "",
     split: str = "dev",
+    budget_usd: float | None = None,
 ) -> Run:
     _check_inputs(prompt, examples)
+    metered = hasattr(runner, "total_cost")
     results: list[ExampleResult] = []
     for e in examples:
         before = getattr(runner, "total_cost", 0.0)
         system, user = prompt.render(e.input)
         resp = runner.complete(
             [Message(role="user", content=user)],
-            GenParams(model=model, system=system or None),
+            GenParams(model=model, system=system or None, budget_usd=budget_usd),
         )
         scores = [s.score(e, resp.text) for s in scorers]
-        cost = getattr(runner, "total_cost", 0.0) - before
+        cost = (runner.total_cost - before) if metered else resp.usage.cost_usd
         results.append(ExampleResult(id=e.id, output=resp.text, scores=scores, cost_usd=cost))
 
     return Run(
@@ -59,7 +63,7 @@ def run_eval(
     )
 
 
-def _aggregate(results: list[ExampleResult]) -> dict:
+def _aggregate(results: list[ExampleResult]) -> dict[str, dict[str, float]]:
     by: dict[str, list[ScoreResult]] = {}
     for r in results:
         for s in r.scores:

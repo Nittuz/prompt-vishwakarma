@@ -311,7 +311,7 @@ def data_validate(
 ):
     root = paths.repo_root()
     proj = _load_project_or_exit(project)
-    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    examples = _load_examples(projects.dataset_path(root, proj, split))
     problems = data_io.validate(examples)
     if problems:
         for p in problems:
@@ -327,7 +327,7 @@ def data_stats(
 ):
     root = paths.repo_root()
     proj = _load_project_or_exit(project)
-    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    examples = _load_examples(projects.dataset_path(root, proj, split))
     s = data_io.stats(examples)
     rprint(f"[bold]{project}/{split}[/]: {s['count']} examples, "
            f"{s['with_reference']} with reference")
@@ -352,11 +352,25 @@ def data_gen(
     except Exception as e:
         rprint(f"[red]data gen failed:[/] {e}")
         raise typer.Exit(1)
+    if not examples:
+        rprint("[yellow]engine returned no usable examples — nothing appended.[/]")
+        rprint(_cost_line(runner))
+        return
     path = projects.dataset_path(root, proj, split)
-    data_io.append_jsonl(path, examples)
+    existing = _load_examples(path)
+    existing_ids = {e.id for e in existing}
+    deduped = []
+    n_next = len(existing) + 1
+    for ex in examples:  # re-id to avoid colliding with what's already in the split
+        if ex.id in existing_ids:
+            ex = ex.model_copy(update={"id": f"gen-{n_next}"})
+            n_next += 1
+        existing_ids.add(ex.id)
+        deduped.append(ex)
+    data_io.append_jsonl(path, deduped)
     with _runs() as runs:
         runs.record("datagen", project, model=runner.last_model or "opus", cost_usd=runner.total_cost)
-    rprint(f"[green]✓[/] generated {len(examples)} examples → {split} ({path})")
+    rprint(f"[green]✓[/] generated {len(deduped)} examples → {split} ({path})")
     rprint("[yellow]review/curate them before evaluating[/]")
     rprint(_cost_line(runner))
 
@@ -364,7 +378,9 @@ def data_gen(
 # ---- eval --------------------------------------------------------------------
 
 
-def _resolve_project_prompt(root: Path, project: str, prompt_name: Optional[str] = None):
+def _resolve_project_prompt(
+    root: Path, project: str, prompt_name: Optional[str] = None, version: Optional[int] = None
+):
     store = projects.prompt_store_for(root, project)
     names = store.list()
     if not names:
@@ -378,7 +394,14 @@ def _resolve_project_prompt(root: Path, project: str, prompt_name: Optional[str]
             )
         prompt_name = names[0]
     with _bad_param_on_missing():
-        return store.load(prompt_name)
+        return store.load(prompt_name, version)
+
+
+def _load_examples(path: Path):
+    try:
+        return data_io.load_jsonl(path)
+    except ValueError as e:  # malformed JSONL line
+        raise typer.BadParameter(str(e))
 
 
 @app.command(name="eval")
@@ -388,15 +411,14 @@ def eval_(
     version: Optional[int] = typer.Option(None, "--version", "-v"),
     model: Optional[str] = typer.Option(None, "--model"),
     split: str = typer.Option("dev", "--split"),
+    budget_usd: Optional[float] = typer.Option(None, "--budget-usd", help="Per-call spend cap."),
     no_cache: bool = typer.Option(False, "--no-cache"),
 ):
     """Evaluate a project's prompt over a dataset split → report + ledger entry."""
     root = paths.repo_root()
     proj = _load_project_or_exit(project)
-    prompt = _resolve_project_prompt(root, project, prompt_name)
-    if version is not None:
-        prompt = projects.prompt_store_for(root, project).load(prompt.name, version)
-    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    prompt = _resolve_project_prompt(root, project, prompt_name, version)
+    examples = _load_examples(projects.dataset_path(root, proj, split))
     if not examples:
         raise typer.BadParameter(f"no examples in {split} split — add some first")
 
@@ -404,7 +426,8 @@ def eval_(
     scorers = build_scorers(proj.scorers, runner=runner, judge_model=proj.models.get("judge", "opus"))
     use_model = model or proj.models.get("primary", "opus")
     try:
-        run = run_eval(runner, prompt, examples, scorers, model=use_model, project=project, split=split)
+        run = run_eval(runner, prompt, examples, scorers, model=use_model, project=project,
+                       split=split, budget_usd=budget_usd)
     except Exception as e:
         rprint(f"[red]eval failed:[/] {e}")
         raise typer.Exit(1)

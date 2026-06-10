@@ -52,3 +52,28 @@ def test_build_scorers_judge_requires_runner():
 
     with pytest.raises(ValueError):
         build_scorers(["llm_judge"], runner=None)
+
+
+def test_build_scorers_missing_name():
+    import pytest
+
+    with pytest.raises(ValueError):
+        build_scorers([{"pattern": "x"}])
+
+
+def test_no_reference_is_explicit():
+    e = Example(id="a", input={})  # reference is None
+    assert ExactMatch().score(e, "x").detail == "no reference"
+    assert Contains().score(e, "x").detail == "no reference"
+    assert NumericTolerance().score(e, "5").detail == "no reference"
+
+
+def test_numeric_handles_sci_and_leading_dot():
+    assert NumericTolerance(tol=0).score(Example(id="a", input={}, reference=100000), "= 1e5").passed
+    assert NumericTolerance(tol=0).score(Example(id="b", input={}, reference=0.5), "is .5 ok").passed
+
+
+def test_json_schema_valid_strips_fences_and_flags_no_schema():
+    r = JsonSchemaValid().score(Example(id="a", input={}), '```json\n{"k": 1}\n```')
+    assert r.passed is True
+    assert "no schema" in r.detail

@@ -63,3 +63,20 @@ def test_eval_without_examples_errors(tmp_path, monkeypatch):
     _setup_project_with_prompt(tmp_path, monkeypatch)
     r = runner.invoke(app, ["eval", "--project", "demo", "--split", "dev"])
     assert r.exit_code != 0  # empty dev split
+
+
+def test_data_gen_empty_with_fake_runner(tmp_path, monkeypatch):
+    # The fake runner yields an empty examples array → nothing appended (no crash).
+    _setup_project_with_prompt(tmp_path, monkeypatch)
+    r = runner.invoke(app, ["data", "gen", "--project", "demo", "--n", "2"])
+    assert r.exit_code == 0, r.output
+    assert "nothing appended" in r.output
+
+
+def test_eval_bad_jsonl_is_clean_error(tmp_path, monkeypatch):
+    _setup_project_with_prompt(tmp_path, monkeypatch)
+    dev = tmp_path / "projects" / "demo" / "datasets" / "dev.jsonl"
+    dev.write_text("{not valid json}")
+    r = runner.invoke(app, ["eval", "--project", "demo", "--split", "dev"])
+    assert r.exit_code != 0
+    assert "Traceback" not in r.output  # surfaced cleanly, not a raw traceback

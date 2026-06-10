@@ -23,6 +23,6 @@ class Project(BaseModel):
     runner: str = "claude"
     models: dict[str, str] = Field(default_factory=_default_models)
     datasets: dict[str, str] = Field(default_factory=_default_datasets)
-    scorers: list = Field(default_factory=lambda: ["llm_judge"])
+    scorers: list[str | dict] = Field(default_factory=lambda: ["llm_judge"])
     optimize: dict = Field(default_factory=dict)
     distill: dict = Field(default_factory=dict)
