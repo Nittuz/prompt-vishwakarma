@@ -13,11 +13,19 @@ from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
+from .datasets import io as data_io
+from .eval.harness import run_eval
+from .eval.report import compare as compare_runs
+from .eval.report import render_report
+from .eval.result import Run
+from .eval.scorers import build_scorers
 from .export import export as export_prompt
 from .generate.base import Brief
 from .generate.critique import critique as critique_prompt
+from .generate.datagen import gen_examples
 from .generate.meta_prompt import generate as generate_prompt
 from .generate.repo_analysis import analyze as analyze_repo
+from .projects import store as projects
 from .prompts.registry import PromptStore
 from .roles.model import list_roles, load_role
 from .runners.cache import ResponseCache
@@ -34,9 +42,11 @@ app = typer.Typer(
 role_app = typer.Typer(help="Inspect role playbooks.", no_args_is_help=True)
 prompt_app = typer.Typer(help="Manage prompt versions.", no_args_is_help=True)
 runs_app = typer.Typer(help="Inspect the local run ledger.", no_args_is_help=True)
+data_app = typer.Typer(help="Manage project datasets.", no_args_is_help=True)
 app.add_typer(role_app, name="role")
 app.add_typer(prompt_app, name="prompt")
 app.add_typer(runs_app, name="runs")
+app.add_typer(data_app, name="data")
 
 console = Console()
 
@@ -253,30 +263,192 @@ def runs_list(limit: int = typer.Option(50, "--limit")):
     rprint(f"[bold]total cost:[/] ${total:.4f}")
 
 
+# ---- projects: init / promote ------------------------------------------------
+
+
+@app.command()
+def init(
+    name: str = typer.Argument(..., help="Project name."),
+    role: str = typer.Option("general", "--role", "-r"),
+):
+    """Scaffold a full project under projects/<name>/."""
+    root = paths.repo_root()
+    if projects.exists(root, name):
+        raise typer.BadParameter(f"project {name!r} already exists")
+    with _bad_param_on_missing():
+        load_role(role)  # validate
+    projects.init_project(root, name, role)
+    rprint(f"[green]✓[/] created project [bold]{name}[/] → projects/{name}/ (role: {role})")
+    rprint("[dim]next: add a prompt (`pv promote <lib-prompt> --to-project " f"{name}`),[/]")
+    rprint(f"[dim]      add examples to projects/{name}/datasets/dev.jsonl, then `pv eval`[/]")
+
+
+@app.command()
+def promote(
+    name: str = typer.Argument(..., help="Library prompt name."),
+    to_project: str = typer.Option(..., "--to-project"),
+):
+    """Graduate a library prompt into a project (creating it if needed)."""
+    root = paths.repo_root()
+    with _bad_param_on_missing():
+        project = projects.promote(root, name, to_project)
+    rprint(f"[green]✓[/] promoted [bold]{name}[/] → project [bold]{project.name}[/]")
+    rprint(f"[dim]prompt copied to projects/{project.name}/prompts/{name}/[/]")
+
+
+# ---- data sub-app ------------------------------------------------------------
+
+
+def _load_project_or_exit(name: str):
+    with _bad_param_on_missing():
+        return projects.load_project(paths.repo_root(), name)
+
+
+@data_app.command("validate")
+def data_validate(
+    project: str = typer.Option(..., "--project"),
+    split: str = typer.Option("dev", "--split"),
+):
+    root = paths.repo_root()
+    proj = _load_project_or_exit(project)
+    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    problems = data_io.validate(examples)
+    if problems:
+        for p in problems:
+            rprint(f"[red]✗[/] {p}")
+        raise typer.Exit(1)
+    rprint(f"[green]✓[/] {split}: {len(examples)} examples, no problems")
+
+
+@data_app.command("stats")
+def data_stats(
+    project: str = typer.Option(..., "--project"),
+    split: str = typer.Option("dev", "--split"),
+):
+    root = paths.repo_root()
+    proj = _load_project_or_exit(project)
+    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    s = data_io.stats(examples)
+    rprint(f"[bold]{project}/{split}[/]: {s['count']} examples, "
+           f"{s['with_reference']} with reference")
+    for field, n in s["input_fields"].items():
+        rprint(f"  [dim]{field}[/]: {n}")
+
+
+@data_app.command("gen")
+def data_gen(
+    project: str = typer.Option(..., "--project"),
+    n: int = typer.Option(5, "--n"),
+    split: str = typer.Option("dev", "--split"),
+    no_cache: bool = typer.Option(False, "--no-cache"),
+):
+    """Synthesize seed examples with Claude and append to a split (curate after)."""
+    root = paths.repo_root()
+    proj = _load_project_or_exit(project)
+    prompt = _resolve_project_prompt(root, project)
+    runner = _runner(no_cache)
+    try:
+        examples = gen_examples(runner, prompt, n=n, model=proj.models.get("primary", "opus"))
+    except Exception as e:
+        rprint(f"[red]data gen failed:[/] {e}")
+        raise typer.Exit(1)
+    path = projects.dataset_path(root, proj, split)
+    data_io.append_jsonl(path, examples)
+    with _runs() as runs:
+        runs.record("datagen", project, model=runner.last_model or "opus", cost_usd=runner.total_cost)
+    rprint(f"[green]✓[/] generated {len(examples)} examples → {split} ({path})")
+    rprint("[yellow]review/curate them before evaluating[/]")
+    rprint(_cost_line(runner))
+
+
+# ---- eval --------------------------------------------------------------------
+
+
+def _resolve_project_prompt(root: Path, project: str, prompt_name: Optional[str] = None):
+    store = projects.prompt_store_for(root, project)
+    names = store.list()
+    if not names:
+        raise typer.BadParameter(
+            f"project {project!r} has no prompt — `pv promote <lib-prompt> --to-project {project}`"
+        )
+    if prompt_name is None:
+        if len(names) > 1:
+            raise typer.BadParameter(
+                f"project has multiple prompts {names}; pass --prompt-name"
+            )
+        prompt_name = names[0]
+    with _bad_param_on_missing():
+        return store.load(prompt_name)
+
+
+@app.command(name="eval")
+def eval_(
+    project: str = typer.Option(..., "--project"),
+    prompt_name: Optional[str] = typer.Option(None, "--prompt-name"),
+    version: Optional[int] = typer.Option(None, "--version", "-v"),
+    model: Optional[str] = typer.Option(None, "--model"),
+    split: str = typer.Option("dev", "--split"),
+    no_cache: bool = typer.Option(False, "--no-cache"),
+):
+    """Evaluate a project's prompt over a dataset split → report + ledger entry."""
+    root = paths.repo_root()
+    proj = _load_project_or_exit(project)
+    prompt = _resolve_project_prompt(root, project, prompt_name)
+    if version is not None:
+        prompt = projects.prompt_store_for(root, project).load(prompt.name, version)
+    examples = data_io.load_jsonl(projects.dataset_path(root, proj, split))
+    if not examples:
+        raise typer.BadParameter(f"no examples in {split} split — add some first")
+
+    runner = _runner(no_cache)
+    scorers = build_scorers(proj.scorers, runner=runner, judge_model=proj.models.get("judge", "opus"))
+    use_model = model or proj.models.get("primary", "opus")
+    try:
+        run = run_eval(runner, prompt, examples, scorers, model=use_model, project=project, split=split)
+    except Exception as e:
+        rprint(f"[red]eval failed:[/] {e}")
+        raise typer.Exit(1)
+
+    run_dir = paths.ensure(projects.project_dir(root, project) / "runs" / run.run_id)
+    (run_dir / "run.json").write_text(run.model_dump_json(indent=2))
+    (run_dir / "report.md").write_text(render_report(run))
+    with _runs() as runs:
+        runs.record("eval", project, model=run.model, cost_usd=run.total_cost_usd,
+                    detail={"run_id": run.run_id, "split": split})
+
+    table = Table("scorer", "mean", "pass rate")
+    for name, m in run.metrics.items():
+        table.add_row(name, f"{m['mean']:.3f}", f"{m['pass_rate']:.0%}")
+    console.print(table)
+    rprint(f"[green]✓[/] {run.run_id} → projects/{project}/runs/{run.run_id}/report.md")
+    rprint(_cost_line(runner))
+
+
+@runs_app.command("compare")
+def runs_compare(run_id_a: str = typer.Argument(...), run_id_b: str = typer.Argument(...)):
+    """Compare two eval runs by id."""
+    root = paths.repo_root()
+    a = _find_run(root, run_id_a)
+    b = _find_run(root, run_id_b)
+    if a is None or b is None:
+        missing = run_id_a if a is None else run_id_b
+        raise typer.BadParameter(f"run not found: {missing}")
+    console.print(compare_runs(a, b))
+
+
+def _find_run(root: Path, run_id: str) -> Optional[Run]:
+    matches = list(paths.projects_dir(root).glob(f"*/runs/{run_id}/run.json"))
+    if not matches:
+        return None
+    return Run.model_validate_json(matches[0].read_text())
+
+
 # ---- stubs (later phases) ----------------------------------------------------
 
 
 def _stub(phase: str):
     rprint(f"[yellow]Not built yet — coming in {phase}.[/]")
     raise typer.Exit(0)
-
-
-@app.command()
-def promote(name: str = typer.Argument(...), to_project: str = typer.Option(..., "--to-project")):
-    """(Phase 3) Graduate a library prompt into a full project."""
-    _stub("Phase 3 (eval)")
-
-
-@app.command()
-def init(name: str = typer.Argument(...), role: str = typer.Option("general", "--role")):
-    """(Phase 3) Scaffold a full project."""
-    _stub("Phase 3 (eval)")
-
-
-@app.command(name="eval")
-def eval_(project: str = typer.Option(..., "--project")):
-    """(Phase 3) Evaluate a prompt over a dataset."""
-    _stub("Phase 3 (eval)")
 
 
 @app.command()
