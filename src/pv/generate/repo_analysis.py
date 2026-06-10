@@ -41,10 +41,9 @@ def analyze(runner: Runner, repo: Path, depth: str = "light") -> dict | None:
     resp = runner.complete(
         [Message(role="user", content=message)],
         GenParams(
-            model="opus",
             tools=["Read", "Glob", "Grep"],
             json_schema=REPO_SCHEMA,
-            max_tokens=2048,
+            add_dir=str(repo),  # grant the engine's file tools access to the repo
         ),
     )
     return resp.structured or None

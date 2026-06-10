@@ -14,12 +14,13 @@ class Message(BaseModel):
 
 class GenParams(BaseModel):
     model: str = "opus"
-    max_tokens: int = 4096
     system: str | None = None
     json_schema: dict | None = None
     budget_usd: float | None = None
     # [] → pure text mode (no tools). e.g. ["Read", "Glob", "Grep"] for repo scans.
     tools: list[str] = Field(default_factory=list)
+    # Directory the engine's file tools may access (and the subprocess cwd).
+    add_dir: str | None = None
 
 
 class Usage(BaseModel):

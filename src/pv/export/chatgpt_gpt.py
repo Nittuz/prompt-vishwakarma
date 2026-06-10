@@ -21,4 +21,7 @@ def export_chatgpt_gpt(prompt: PromptVersion, out_dir: Path) -> Path:
         f"## Instructions\n{prompt.system}\n\n"
         f"## Conversation starter (task template)\n{starter}\n"
     )
+    if prompt.variables():
+        vars_list = ", ".join(f"`{{{v}}}`" for v in sorted(prompt.variables()))
+        content += f"\n## Variables\nFill in at use-time: {vars_list}\n"
     return write(out_dir / f"{slug}-gpt.md", content)

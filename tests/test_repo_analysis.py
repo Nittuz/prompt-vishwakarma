@@ -14,6 +14,7 @@ def test_light_calls_runner_with_read_tools():
     def responder(messages, params):
         captured["tools"] = params.tools
         captured["schema"] = params.json_schema is not None
+        captured["add_dir"] = params.add_dir
         return {
             "stack": "next.js",
             "conventions": ["app router"],
@@ -25,6 +26,7 @@ def test_light_calls_runner_with_read_tools():
     assert out["stack"] == "next.js"
     assert "Read" in captured["tools"]
     assert captured["schema"] is True
+    assert captured["add_dir"] == "/x"  # repo granted to the engine's file tools
 
 
 def test_deep_uses_thorough_scope():

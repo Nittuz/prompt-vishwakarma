@@ -1,3 +1,5 @@
+import pytest
+
 from pv.generate.base import Brief
 from pv.generate.meta_prompt import build_meta_prompt, generate
 from pv.roles.model import load_role
@@ -39,3 +41,13 @@ def test_generate_returns_promptversion():
     assert pv.name == slugify("My MBR agenda!")
     assert pv.role == "meeting"
     assert rationale == "r"
+
+
+def test_generate_raises_on_empty_structured():
+    # A runner that returns no structured payload (plain text) must not silently
+    # save an empty prompt.
+    def responder(messages, params):
+        return "not structured"
+
+    with pytest.raises(RuntimeError):
+        generate(FakeRunner(responder), Brief(idea="x", role="general"))

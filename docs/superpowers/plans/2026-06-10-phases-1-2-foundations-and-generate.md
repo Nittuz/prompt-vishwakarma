@@ -775,6 +775,26 @@ def test_role_list():
 
 ---
 
+## Post-review adjustments (applied after adversarial review)
+Verified findings from the multi-dimension review were fixed:
+- **Auth (blocker):** `--bare` broke OAuth/keychain (key-free promise). Now gated
+  — added only when API-key/3P-provider auth is present; pure-OAuth runs omit it.
+- **Repo grounding (major):** repo analysis now passes `--add-dir <repo>` and runs
+  the subprocess with `cwd=<repo>` so the engine's file tools can actually read it.
+- **Silent empty output (major):** generate/critique now raise when the engine
+  returns no structured payload instead of saving an empty prompt.
+- **Cache wired (major):** `CachingRunner` now wraps the engine (hits cost $0);
+  `--no-cache` bypasses.
+- **Brief persisted (major):** `pv new` writes `library/<name>/brief.yaml`.
+- **Clean errors (major):** repo analysis is inside the same try/except as
+  generation; engine errors surface as messages, not tracebacks.
+- **Robustness/minor:** subprocess timeout (`PV_TIMEOUT`), guarded JSON parse,
+  `--repo` existence check, atomic prompt writes, prompt-name path-traversal
+  guard, model `@date` suffix stripped, ledger records the real model, cost
+  fallback via `estimate_cost`, `RunStore` context-managed, neutral cwd for pure
+  generation, removed the no-op `max_tokens`.
+- **Documented deviation:** `pv new` brief is non-interactive in v1 (idea+role).
+
 ## Self-review (author)
 - **Spec coverage:** runners ✓ (claude subprocess; Agent SDK deferred & noted), cache ✓, prompts ✓, generate (brief/meta/repo-toggle/critique) ✓, roles (6 builtins as playbooks) ✓, export (3 targets) ✓, store/cost ✓, CLI incl. `new` ✓, library storage ✓, `.claude/commands` ✓. Deferred per scope: eval/optimize/distill/promote/init (stubbed), Agent SDK, OpenAI runner.
 - **Placeholder scan:** all code steps contain real code; YAML role contents enumerated in Task 6.

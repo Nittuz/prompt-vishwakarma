@@ -23,6 +23,13 @@ def test_content_hash_changes_with_content():
     assert a.content_hash != b.content_hash
 
 
+def test_invalid_name_rejected(tmp_path):
+    s = PromptStore(tmp_path)
+    for bad in ["../evil", "a/b", "..", "x\\y"]:
+        with pytest.raises(ValueError):
+            s.versions(bad)
+
+
 def test_versioning(tmp_path):
     s = PromptStore(tmp_path)
     a = s.save_new_version(PromptVersion(name="agenda", system="s", user="u {x}"))

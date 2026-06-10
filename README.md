@@ -62,8 +62,19 @@ inspect the repo at use-time).
 - **Offline / CI:** `export PV_RUNNER=fake` uses a deterministic fake engine so
   the CLI and tests run with zero model calls.
 
-> Implementation note: v1 calls the `claude` CLI via subprocess. The official
-> Claude Agent SDK is a planned drop-in behind the same `Runner` interface.
+**Auth:** works with whatever your Claude Code uses — OAuth/subscription login,
+API key, or a 3rd-party provider (Vertex/Bedrock). When an API-key or 3P-provider
+credential is present, runs use `--bare` (skips hooks/`CLAUDE.md` for cheaper,
+unbiased generation). Pure OAuth/subscription users automatically run without
+`--bare` so login still works. Identical repeated calls are served from a local
+cache (`--no-cache` to bypass).
+
+### v1 notes
+- `pv new` builds the brief from the **idea + role** (and `--repo`). Richer brief
+  fields (audience, explicit inputs/constraints) are a planned enhancement — for
+  now, fold them into the idea text.
+- The engine calls the `claude` CLI via subprocess. The official Claude Agent SDK
+  is a planned drop-in behind the same `Runner` interface.
 
 ## Develop
 

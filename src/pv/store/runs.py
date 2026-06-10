@@ -24,9 +24,15 @@ class RunStore:
     def __init__(self, db_path: Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(db_path)
+        self.db = sqlite3.connect(db_path, timeout=5.0)
         self.db.execute(_DDL)
         self.db.commit()
+
+    def __enter__(self) -> "RunStore":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     def record(
         self,

@@ -82,9 +82,14 @@ def generate(
     meta = build_meta_prompt(brief, role, repo_summary)
     resp = runner.complete(
         [Message(role="user", content=meta)],
-        GenParams(model="opus", json_schema=GEN_SCHEMA, max_tokens=4096),
+        GenParams(json_schema=GEN_SCHEMA),
     )
-    data = resp.structured or {}
+    data = resp.structured
+    if not data or not data.get("system") or not data.get("user"):
+        raise RuntimeError(
+            "the engine did not return a structured prompt (system/user missing). "
+            "Try again, or use --no-cache."
+        )
     prompt = PromptVersion(
         name=slugify(brief.idea),
         role=brief.role,

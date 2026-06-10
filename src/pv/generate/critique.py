@@ -30,9 +30,14 @@ def critique(runner: Runner, prompt: PromptVersion) -> tuple[PromptVersion, str]
     )
     resp = runner.complete(
         [Message(role="user", content=message)],
-        GenParams(model="opus", json_schema=CRIT_SCHEMA, max_tokens=4096),
+        GenParams(json_schema=CRIT_SCHEMA),
     )
-    data = resp.structured or {}
+    data = resp.structured
+    if not data or not data.get("system") or not data.get("user"):
+        raise RuntimeError(
+            "the engine did not return a structured revision (system/user missing). "
+            "Try again, or use --no-cache."
+        )
     revised = prompt.model_copy(
         update={
             "system": data.get("system", prompt.system),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -11,13 +13,20 @@ from .model import PromptVersion
 _BODY_FIELDS = ("role", "description", "defaults", "system", "user")
 
 
+def _validate_name(name: str) -> str:
+    """Reject names that could escape the store directory."""
+    if not name or "/" in name or "\\" in name or name in (".", "..") or ".." in name:
+        raise ValueError(f"invalid prompt name: {name!r}")
+    return name
+
+
 class PromptStore:
     def __init__(self, base: Path):
         self.base = Path(base)
         self.base.mkdir(parents=True, exist_ok=True)
 
     def _dir(self, name: str) -> Path:
-        return self.base / name
+        return self.base / _validate_name(name)
 
     def versions(self, name: str) -> list[int]:
         d = self._dir(name)
@@ -42,10 +51,22 @@ class PromptStore:
         nextv = (existing[-1] + 1) if existing else 1
         saved = prompt.model_copy(update={"version": nextv})
         body = {k: getattr(saved, k) for k in _BODY_FIELDS}
-        (d / f"v{nextv}.yaml").write_text(yaml.safe_dump(body, sort_keys=False))
+        _atomic_write(d / f"v{nextv}.yaml", yaml.safe_dump(body, sort_keys=False))
         return saved
 
     def list(self) -> list[str]:
         if not self.base.exists():
             return []
         return sorted(d.name for d in self.base.iterdir() if d.is_dir())
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write via a temp file + atomic rename so an interrupt can't corrupt it."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import difflib
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
@@ -18,6 +20,8 @@ from .generate.meta_prompt import generate as generate_prompt
 from .generate.repo_analysis import analyze as analyze_repo
 from .prompts.registry import PromptStore
 from .roles.model import list_roles, load_role
+from .runners.cache import ResponseCache
+from .runners.caching import CachingRunner
 from .runners.metering import MeteringRunner
 from .runners.registry import get_runner
 from .store import paths
@@ -37,12 +41,32 @@ app.add_typer(runs_app, name="runs")
 console = Console()
 
 
+@contextmanager
+def _bad_param_on_missing():
+    try:
+        yield
+    except FileNotFoundError as e:
+        raise typer.BadParameter(str(e))
+
+
 def _store() -> PromptStore:
     return PromptStore(paths.library_dir(paths.repo_root()))
 
 
 def _runs() -> RunStore:
     return RunStore(paths.runs_db(paths.repo_root()))
+
+
+def _runner(no_cache: bool = False) -> MeteringRunner:
+    inner = get_runner()
+    if no_cache:
+        return MeteringRunner(inner)
+    cache = ResponseCache(paths.cache_dir(paths.repo_root()))
+    return MeteringRunner(CachingRunner(inner, cache))
+
+
+def _cost_line(runner: MeteringRunner) -> str:
+    return f"[dim]cost: ${runner.total_cost:.4f} ({runner.n_calls} call(s))[/]"
 
 
 @app.command()
@@ -55,12 +79,15 @@ def new(
     target: Optional[str] = typer.Option(
         None, "--target", help="Auto-export target: claude|cursor|chatgpt|raw."
     ),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the response cache."),
 ):
     """Generate a prompt from a brief into the library."""
-    try:
+    with _bad_param_on_missing():
         role_obj = load_role(role)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
+    if repo is not None:
+        if not repo.is_dir():
+            raise typer.BadParameter(f"repo not found: {repo}")
+        repo = repo.resolve()
 
     if no_analyze:
         analyze_mode = "off"
@@ -70,39 +97,44 @@ def new(
         analyze_mode = role_obj.repo_analysis
     tgt = target or role_obj.target
 
-    runner = MeteringRunner(get_runner())
-    repo_summary = None
-    if repo is not None and analyze_mode != "off":
-        rprint(f"[dim]Analyzing repo ({analyze_mode}) …[/]")
-        repo_summary = analyze_repo(runner, repo, analyze_mode)
-
-    brief = Brief(idea=idea, role=role, target=tgt, repo=repo, analyze=analyze_mode)
+    runner = _runner(no_cache)
     try:
+        repo_summary = None
+        if repo is not None and analyze_mode != "off":
+            rprint(f"[dim]Analyzing repo ({analyze_mode}) …[/]")
+            repo_summary = analyze_repo(runner, repo, analyze_mode)
+        brief = Brief(idea=idea, role=role, target=tgt, repo=repo, analyze=analyze_mode)
         prompt, rationale = generate_prompt(runner, brief, repo_summary)
-    except Exception as e:  # surface engine errors cleanly
+    except Exception as e:  # surface engine errors cleanly, not as a traceback
         rprint(f"[red]generation failed:[/] {e}")
         raise typer.Exit(1)
 
+    root = paths.repo_root()
     saved = _store().save_new_version(prompt)
-    _runs().record(
-        "generate",
-        saved.name,
-        model="opus",
-        cost_usd=runner.total_cost,
-        detail={"role": role, "target": tgt, "analyze": analyze_mode},
-    )
+    _write_brief(paths.library_dir(root) / saved.name / "brief.yaml", brief)
+    with _runs() as runs:
+        runs.record(
+            "generate",
+            saved.name,
+            model=runner.last_model or "opus",
+            cost_usd=runner.total_cost,
+            detail={"role": role, "target": tgt, "analyze": analyze_mode},
+        )
 
     rel = f"library/{saved.name}/v{saved.version}.yaml"
     rprint(f"[green]✓[/] generated [bold]{saved.name}[/] v{saved.version} → {rel}")
     if rationale:
         rprint(f"[dim]rationale:[/] {rationale}")
-
     if tgt != "raw":
-        out_dir = paths.ensure(paths.library_dir(paths.repo_root()) / saved.name / "exports")
+        out_dir = paths.ensure(paths.library_dir(root) / saved.name / "exports")
         out_path = export_prompt(saved, tgt, out_dir)
         rprint(f"[green]✓[/] exported ({tgt}) → {out_path}")
+    rprint(_cost_line(runner))
 
-    rprint(f"[dim]cost: ${runner.total_cost:.4f}[/]")
+
+def _write_brief(path: Path, brief: Brief) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(brief.model_dump(mode="json"), sort_keys=False))
 
 
 @app.command()
@@ -112,11 +144,8 @@ def export(
     out: Optional[Path] = typer.Option(None, "--out", help="Output directory."),
 ):
     """Export a library prompt as a portable artifact."""
-    store = _store()
-    try:
-        prompt = store.load(name)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
+    with _bad_param_on_missing():
+        prompt = _store().load(name)
     out_dir = out or (paths.library_dir(paths.repo_root()) / name / "exports")
     paths.ensure(Path(out_dir))
     path = export_prompt(prompt, target, Path(out_dir))
@@ -141,10 +170,8 @@ def prompt_show(
     name: str = typer.Argument(...),
     version: Optional[int] = typer.Option(None, "--version", "-v"),
 ):
-    try:
+    with _bad_param_on_missing():
         p = _store().load(name, version)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
     rprint(f"[bold]{p.name}[/] v{p.version}  (role: {p.role})")
     rprint(f"[dim]{p.description}[/]\n")
     rprint("[bold]system[/]\n" + p.system + "\n")
@@ -157,12 +184,10 @@ def prompt_diff(
     v1: int = typer.Argument(...),
     v2: int = typer.Argument(...),
 ):
-    store = _store()
-    try:
+    with _bad_param_on_missing():
+        store = _store()
         a = store.load(name, v1)
         b = store.load(name, v2)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
     a_text = f"{a.system}\n---\n{a.user}".splitlines(keepends=True)
     b_text = f"{b.system}\n---\n{b.user}".splitlines(keepends=True)
     diff = difflib.unified_diff(a_text, b_text, fromfile=f"v{v1}", tofile=f"v{v2}")
@@ -170,21 +195,27 @@ def prompt_diff(
 
 
 @prompt_app.command("critique")
-def prompt_critique(name: str = typer.Argument(...)):
+def prompt_critique(
+    name: str = typer.Argument(...),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the response cache."),
+):
     """Single-shot critique → a new improved version."""
     store = _store()
-    try:
+    with _bad_param_on_missing():
         current = store.load(name)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
-    runner = MeteringRunner(get_runner())
-    revised, changes = critique_prompt(runner, current)
+    runner = _runner(no_cache)
+    try:
+        revised, changes = critique_prompt(runner, current)
+    except Exception as e:
+        rprint(f"[red]critique failed:[/] {e}")
+        raise typer.Exit(1)
     saved = store.save_new_version(revised)
-    _runs().record("critique", name, model="opus", cost_usd=runner.total_cost)
+    with _runs() as runs:
+        runs.record("critique", name, model=runner.last_model or "opus", cost_usd=runner.total_cost)
     rprint(f"[green]✓[/] critiqued [bold]{name}[/] → v{saved.version}")
     if changes:
         rprint(f"[dim]changes:[/] {changes}")
-    rprint(f"[dim]cost: ${runner.total_cost:.4f}[/]")
+    rprint(_cost_line(runner))
 
 
 # ---- role sub-app ------------------------------------------------------------
@@ -198,10 +229,8 @@ def role_list():
 
 @role_app.command("show")
 def role_show(name: str = typer.Argument(...)):
-    try:
+    with _bad_param_on_missing():
         r = load_role(name)
-    except FileNotFoundError as e:
-        raise typer.BadParameter(str(e))
     rprint(f"[bold]{r.name}[/] — {r.description}")
     rprint(f"[dim]repo_analysis:[/] {r.repo_analysis}   [dim]target:[/] {r.target}")
     rprint("\n[bold]sections[/]\n" + "\n".join(f"  - {s}" for s in r.sections))
@@ -214,13 +243,14 @@ def role_show(name: str = typer.Argument(...)):
 
 @runs_app.command("list")
 def runs_list(limit: int = typer.Option(50, "--limit")):
-    store = _runs()
-    rows = store.list(limit)
+    with _runs() as store:
+        rows = store.list(limit)
+        total = store.total_cost()
     table = Table("id", "kind", "name", "model", "cost ($)")
     for rid, kind, name, model, cost in rows:
         table.add_row(str(rid), kind, name, model, f"{cost:.4f}")
     console.print(table)
-    rprint(f"[bold]total cost:[/] ${store.total_cost():.4f}")
+    rprint(f"[bold]total cost:[/] ${total:.4f}")
 
 
 # ---- stubs (later phases) ----------------------------------------------------
